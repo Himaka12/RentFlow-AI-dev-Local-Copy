@@ -14,17 +14,22 @@ var builder = WebApplication.CreateBuilder(args);
 const string DevelopmentCorsPolicy = "DevelopmentCors";
 
 // Add services to the container.
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("Connection string 'DefaultConnection' was not found.");
 
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseNpgsql(connectionString));
 
-builder.Services.AddOptions<CloudflareR2Options>()
+var cloudflareR2Options = builder.Services
+    .AddOptions<CloudflareR2Options>()
     .Bind(builder.Configuration.GetSection(CloudflareR2Options.SectionName))
-    .ValidateDataAnnotations()
-    .ValidateOnStart();
+    .ValidateDataAnnotations();
+
+// Require R2 credentials outside local development.
+if (!builder.Environment.IsDevelopment())
+{
+    cloudflareR2Options.ValidateOnStart();
+}
 
 builder.Services.AddOptions<AgentServiceOptions>()
     .Bind(builder.Configuration.GetSection(AgentServiceOptions.SectionName));
@@ -46,11 +51,13 @@ builder.Services.AddOptions<JwtOptions>()
     .ValidateOnStart();
 
 var jwtSection = builder.Configuration.GetSection(JwtOptions.SectionName);
+
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
         var jwtOptions = jwtSection.Get<JwtOptions>() ?? new JwtOptions();
+
         options.MapInboundClaims = false;
         options.TokenValidationParameters = new TokenValidationParameters
         {
@@ -67,6 +74,7 @@ builder.Services
             RoleClaimType = "role"
         };
     });
+
 builder.Services.AddAuthorization();
 
 builder.Services.AddScoped<IViewingService, ViewingService>();
@@ -83,12 +91,16 @@ builder.Services.AddScoped<IDocumentValidationTool, DocumentValidationTool>();
 builder.Services.AddScoped<IDeterministicApplicationRuleTool, DeterministicApplicationRuleTool>();
 builder.Services.AddScoped<IApplicationValidationOrchestrator, ApplicationValidationOrchestrator>();
 builder.Services.AddScoped<IApplicationValidationQueryService, ApplicationValidationQueryService>();
+
 builder.Services.AddHttpClient<IApplicationValidationAgentClient, ApplicationValidationAgentClient>(client =>
     client.Timeout = Timeout.InfiniteTimeSpan);
+
 builder.Services.AddSingleton<IFileStorageService, CloudflareR2StorageService>();
 builder.Services.AddSingleton(TimeProvider.System);
+
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
+
 builder.Services.AddSwaggerGen(options =>
 {
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
@@ -99,6 +111,7 @@ builder.Services.AddSwaggerGen(options =>
         BearerFormat = "JWT",
         In = ParameterLocation.Header
     });
+
     options.AddSecurityRequirement(new OpenApiSecurityRequirement
     {
         [new OpenApiSecurityScheme
